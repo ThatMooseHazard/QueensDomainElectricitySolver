@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lights Solver</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --fg: #222; --muted: #6b6860; --line: #8a867c;
+    --on: #f2b707; --on-edge: #9a7000; --off: #fff; --off-edge: #444;
+    --press: #d6336c; --card: #fff; --border: #d9d5ca; --accent: #2b59c3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1b19; --fg: #eee; --muted: #a09c92; --line: #77736a;
+      --on: #f2b707; --on-edge: #ffd95a; --off: #2a2926; --off-edge: #bbb;
+      --press: #ff6b9a; --card: #262522; --border: #3d3b36; --accent: #7aa2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.4 system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; display: grid; gap: 16px;
+         grid-template-columns: 1fr; }
+  @media (min-width: 800px) { main { grid-template-columns: 1.3fr 1fr; } }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; grid-column: 1 / -1; }
+  .sub { color: var(--muted); font-size: .9rem; margin: 0; grid-column: 1 / -1; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 12px; }
+  svg { width: 100%; height: auto; max-height: 85vh; display: block; touch-action: manipulation; }
+  .edge { stroke: var(--line); stroke-width: 3; }
+  .node { cursor: pointer; }
+  .node circle.body { stroke-width: 3; transition: fill .15s; }
+  .node.on circle.body { fill: var(--on); stroke: var(--on-edge); }
+  .node.off circle.body { fill: var(--off); stroke: var(--off-edge); }
+  .ring { fill: none; stroke: var(--press); stroke-width: 4; stroke-dasharray: 6 4; }
+  .badge { fill: var(--press); }
+  .badgetxt { fill: #fff; font: 700 13px system-ui, sans-serif; text-anchor: middle;
+              dominant-baseline: central; pointer-events: none; }
+  .idx { font: 600 12px system-ui, sans-serif; fill: var(--fg); text-anchor: middle;
+         dominant-baseline: central; pointer-events: none; opacity: .55; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  button { font: inherit; padding: 8px 12px; border: 1px solid var(--border);
+           background: var(--card); color: var(--fg); border-radius: 8px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  .label { font-size: .8rem; color: var(--muted); margin: 0 0 4px; text-transform: uppercase;
+           letter-spacing: .04em; }
+  #result ol { margin: 8px 0 0; padding-left: 1.4rem; }
+  #result li { margin: 4px 0; }
+  .msg { margin: 0; }
+  .win { color: #1a8f3c; font-weight: 700; }
+  .bad { color: var(--press); font-weight: 600; }
+  .hint { color: var(--muted); font-size: .85rem; margin: 10px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lights solver</h1>
+  <p class="sub">Pressing a light toggles it and every light connected to it.</p>
+
+  <section class="card">
+    <svg id="board" viewBox="0 0 600 480" role="img" aria-label="Light puzzle graph"></svg>
+    <p class="hint" id="hint"></p>
+  </section>
+
+  <section>
+    <div class="card">
+      <p class="label">Puzzle</p>
+      <div class="controls">
+        <div class="seg" id="puzzleSeg" role="group" aria-label="Puzzle"></div>
+      </div>
+      <p class="label">Mode</p>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Mode">
+          <button id="mEdit" class="active">Edit start state</button>
+          <button id="mPlay">Play</button>
+        </div>
+      </div>
+      <p class="label">Goal</p>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Goal">
+          <button id="gOn" class="active">All on</button>
+          <button id="gOff">All off</button>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="solve" class="primary">Solve</button>
+        <button id="reset">Reset to start</button>
+        <button id="allOn">Set all on</button>
+        <button id="allOff">Set all off</button>
+      </div>
+      <div id="result"><p class="msg">Click lights to set the starting state, then press Solve.</p></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ---------- Puzzle definitions: add or edit puzzles here ---------- */
+// nodes: [x, y] positions in the 600x480 drawing. edges: pairs of node indices.
+// startOn: lights that are on at the start. goalOn: default goal (true = all on).
+const PUZZLES = [
+  {
+    name: "Puzzle 1",
+    nodes: [
+      [60, 40],  [540, 40],                                      // 0,1 antennas
+      [60, 110], [180, 110], [300, 110], [420, 110], [540, 110], // 2-6 row
+      [75, 200], [125, 280], [200, 350],                         // 7,8,9 left side
+      [525, 210],                                                // 10 right side
+      [420, 350], [310, 435],                                    // 11,12 triangle
+    ],
+    edges: [
+      [0,2],[1,6],
+      [2,3],[3,4],[4,5],[5,6],
+      [2,7],[7,8],[8,9],
+      [6,10],[10,11],
+      [9,11],[9,12],[11,12],
+    ],
+    names: [
+      "Top-left antenna","Top-right antenna","Row 1 (left end)","Row 2","Row 3 (middle)",
+      "Row 4","Row 5 (right end)","Left side 1","Left side 2","Triangle left",
+      "Right side","Triangle right","Triangle bottom",
+    ],
+    startOn: [],
+  },
+  {
+    name: "Puzzle 2",
+    nodes: [
+      [300, 35],                                  // 0 top antenna
+      [300, 105],                                 // 1 top of ring
+      [220, 170], [150, 250], [215, 330],         // 2,3,4 left side of ring
+      [300, 385],                                 // 5 bottom of ring
+      [300, 450],                                 // 6 bottom antenna
+      [385, 330], [450, 250], [380, 170],         // 7,8,9 right side of ring
+    ],
+    edges: [
+      [0,1],
+      [1,2],[2,3],[3,4],[4,5],
+      [5,6],
+      [5,7],[7,8],[8,9],[9,1],
+    ],
+    names: [
+      "Top antenna","Ring top","Upper-left","Left","Lower-left",
+      "Ring bottom","Bottom antenna","Lower-right","Right","Upper-right",
+    ],
+    startOn: [],
+  },
+  {
+    name: "Puzzle 3",
+    viewBox: "0 0 440 870",
+    nodes: [
+      [124, 82], [75, 131], [128, 194], [219, 138],   // 0-3 four-light loop
+      [303, 121], [296, 58], [387, 47], [380, 149],   // 4-7 junction, antenna, triangle
+      [390, 264], [401, 366], [401, 457],             // 8-10 right tail
+      [131, 299], [131, 380], [54, 380],              // 11-13 left tail, side light
+      [149, 460], [149, 569], [152, 670], [156, 747], [163, 821], // 14-18 long tail
+    ],
+    edges: [
+      [0,1],[1,2],[2,3],[3,0],                        // the loop
+      [3,4],                                          // loop to junction
+      [4,5],[4,6],[4,7],[6,7],                        // junction, antenna, triangle
+      [7,8],[8,9],[9,10],                             // right tail
+      [2,11],[11,12],[12,13],[12,14],                 // left tail and side light
+      [14,15],[15,16],[16,17],[17,18],                // long tail
+    ],
+    names: [
+      "Loop top","Loop left","Loop bottom","Loop right",
+      "Junction","Antenna","Triangle top","Triangle bottom",
+      "Right tail 1","Right tail 2","Right tail end",
+      "Left tail 1","Left tail 2 (branch)","Side light",
+      "Long tail 1","Long tail 2","Long tail 3","Long tail 4","Long tail end",
+    ],
+    startOn: [],
+  },
+];
+
+/* ---------- Solver (GF(2) elimination) ---------- */
+// SOLVER-START
+function buildNeighbours(n, edges) {
+  const nb = Array.from({length: n}, (_, i) => new Set([i]));
+  for (const [a, b] of edges) { nb[a].add(b); nb[b].add(a); }
+  return nb;
+}
+function solvePuzzle(state, goalOn, nb) {
+  const n = state.length;
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    let r = 0;
+    for (const j of nb[i]) r |= (1 << j);
+    if (state[i] !== goalOn) r |= (1 << n);
+    rows.push(r);
+  }
+  const pivots = [];
+  let r = 0;
+  for (let col = 0; col < n; col++) {
+    let p = -1;
+    for (let k = r; k < n; k++) if ((rows[k] >> col) & 1) { p = k; break; }
+    if (p < 0) continue;
+    [rows[r], rows[p]] = [rows[p], rows[r]];
+    for (let k = 0; k < n; k++) if (k !== r && ((rows[k] >> col) & 1)) rows[k] ^= rows[r];
+    pivots.push(col);
+    r++;
+  }
+  for (let k = r; k < n; k++) if (rows[k] === (1 << n)) return null; // unsolvable
+  const free = [];
+  for (let c = 0; c < n; c++) if (!pivots.includes(c)) free.push(c);
+  let best = null;
+  for (let mask = 0; mask < (1 << free.length); mask++) {
+    const x = new Array(n).fill(0);
+    free.forEach((c, i) => { x[c] = (mask >> i) & 1; });
+    pivots.forEach((c, k) => {
+      let v = (rows[k] >> n) & 1;
+      for (const f of free) if ((rows[k] >> f) & 1) v ^= x[f];
+      x[c] = v;
+    });
+    const presses = [];
+    x.forEach((v, i) => { if (v) presses.push(i); });
+    if (best === null || presses.length < best.length) best = presses;
+  }
+  return best;
+}
+// SOLVER-END
+
+/* ---------- UI ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("board");
+const $ = id => document.getElementById(id);
+
+let puzzle, N, NB, nodeEls;
+let start, cur;
+let mode = "edit";
+let goalOn = true;
+let plan = null;          // null = not shown; array = presses; "none" = unsolvable
+let presses = 0;
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function loadPuzzle(index) {
+  puzzle = PUZZLES[index];
+  N = puzzle.nodes.length;
+  NB = buildNeighbours(N, puzzle.edges);
+  start = Array.from({length: N}, (_, i) => puzzle.startOn.includes(i));
+  cur = start.slice();
+  presses = 0;
+  plan = null;
+
+  svg.setAttribute("viewBox", puzzle.viewBox || "0 0 600 480");
+  svg.innerHTML = "";
+  nodeEls = [];
+  for (const [a, b] of puzzle.edges) {
+    const [x1, y1] = puzzle.nodes[a], [x2, y2] = puzzle.nodes[b];
+    el("line", {class: "edge", x1, y1, x2, y2}, svg);
+  }
+  puzzle.nodes.forEach(([x, y], i) => {
+    const g = el("g", {class: "node off", tabindex: 0, role: "button", "aria-label": puzzle.names[i]}, svg);
+    const ring = el("circle", {class: "ring", cx: x, cy: y, r: 31, visibility: "hidden"}, g);
+    el("circle", {class: "body", cx: x, cy: y, r: 22}, g);
+    el("text", {class: "idx", x, y}, g).textContent = i;
+    const badge = el("circle", {class: "badge", cx: x + 24, cy: y - 24, r: 11, visibility: "hidden"}, g);
+    const btxt = el("text", {class: "badgetxt", x: x + 24, y: y - 24}, g);
+    g.addEventListener("click", () => clickNode(i));
+    g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); clickNode(i); } });
+    nodeEls.push({g, ring, badge, btxt});
+  });
+
+  [...$("puzzleSeg").children].forEach((b, k) => b.classList.toggle("active", k === index));
+  render();
+}
+
+PUZZLES.forEach((p, k) => {
+  const b = document.createElement("button");
+  b.textContent = p.name;
+  b.onclick = () => loadPuzzle(k);
+  $("puzzleSeg").appendChild(b);
+});
+
+function clickNode(i) {
+  if (mode === "edit") {
+    start[i] = !start[i];
+    cur = start.slice();
+    presses = 0;
+  } else {
+    for (const j of NB[i]) cur[j] = !cur[j];
+    presses++;
+  }
+  if (plan !== null) computePlan();
+  render();
+}
+
+function computePlan() {
+  const s = solvePuzzle(cur, goalOn, NB);
+  plan = s === null ? "none" : s;
+}
+
+function render() {
+  const solved = cur.every(v => v === goalOn);
+  const order = Array.isArray(plan) ? plan : [];
+  nodeEls.forEach((n, i) => {
+    n.g.setAttribute("class", "node " + (cur[i] ? "on" : "off"));
+    const k = order.indexOf(i);
+    const show = k >= 0 ? "visible" : "hidden";
+    n.ring.setAttribute("visibility", show);
+    n.badge.setAttribute("visibility", show);
+    n.btxt.textContent = k >= 0 ? "" + (k + 1) : "";
+  });
+  $("mEdit").classList.toggle("active", mode === "edit");
+  $("mPlay").classList.toggle("active", mode === "play");
+  $("gOn").classList.toggle("active", goalOn);
+  $("gOff").classList.toggle("active", !goalOn);
+  $("hint").textContent = mode === "edit"
+    ? "Edit mode: click a light to flip it in the starting state."
+    : "Play mode: click a light to press it (toggles it and its neighbours).";
+
+  const r = $("result");
+  r.innerHTML = "";
+  const p = (cls, text) => { const e = document.createElement("p"); e.className = "msg " + cls; e.textContent = text; r.appendChild(e); };
+  if (solved) {
+    p("win", `Solved! All lights are ${goalOn ? "on" : "off"}` + (mode === "play" && presses ? ` after ${presses} press${presses === 1 ? "" : "es"}.` : "."));
+  } else if (plan === null) {
+    p("", "Click lights to set the starting state, then press Solve.");
+  } else if (plan === "none") {
+    p("bad", "No solution exists from this state.");
+  } else {
+    p("", `Press these ${plan.length} light${plan.length === 1 ? "" : "s"} (any order):`);
+    const ol = document.createElement("ol");
+    plan.forEach(i => { const li = document.createElement("li"); li.textContent = `${i}: ${puzzle.names[i]}`; ol.appendChild(li); });
+    r.appendChild(ol);
+  }
+}
+
+$("mEdit").onclick = () => { mode = "edit"; cur = start.slice(); presses = 0; if (plan !== null) computePlan(); render(); };
+$("mPlay").onclick = () => { mode = "play"; render(); };
+$("gOn").onclick  = () => { goalOn = true;  if (plan !== null) computePlan(); render(); };
+$("gOff").onclick = () => { goalOn = false; if (plan !== null) computePlan(); render(); };
+$("solve").onclick = () => { computePlan(); render(); };
+$("reset").onclick = () => { cur = start.slice(); presses = 0; if (plan !== null) computePlan(); render(); };
+$("allOn").onclick  = () => { start = start.map(() => true);  cur = start.slice(); presses = 0; plan = null; render(); };
+$("allOff").onclick = () => { start = start.map(() => false); cur = start.slice(); presses = 0; plan = null; render(); };
+
+loadPuzzle(0);
+</script>
+</body>
+</html>
